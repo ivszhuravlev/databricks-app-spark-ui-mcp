@@ -1,8 +1,10 @@
-# Spark performance tuning and debugging
+# Skills
 
-Two `SKILL.md` packages. Attach them to any Spark-UI-capable agent (or any agent that can read a query profile). Markdown only: no scripts, no host-specific URLs.
+Two Genie Code skills. Install both with the App. See the [root README](../README.md).
 
-| Skill | When to attach |
+| Skill | Use when |
 | --- | --- |
-| [spark-performance-tuning](spark-performance-tuning/SKILL.md) | Too slow or too expensive: wall stage first, then shuffle, files, join, grain, partitioning, UDFs. |
-| [spark-debugging](spark-debugging/SKILL.md) | Failed or pathological: first error, OOM vs spill, driver vs executor, task exceptions. |
+| [spark-performance-tuning](spark-performance-tuning/SKILL.md) | Job is too slow or too expensive |
+| [spark-debugging](spark-debugging/SKILL.md) | Job failed or looks pathological |
+
+Copy each folder (with `SKILL.md`) into `.assistant/skills/` in the workspace.

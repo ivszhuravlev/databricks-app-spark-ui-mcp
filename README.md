@@ -1,63 +1,94 @@
-# Databricks App: Spark UI MCP
+# Spark UI for Genie Code
 
-Read-only MCP server for **classic compute Spark UI**. Deploy it as a Databricks App, then attach it in Genie Code.
+A Databricks App (MCP) and two Genie Code skills. Install both. Skills without the App guess from source. The App without the skills is raw Spark UI JSON.
 
-## The problem
+## Why
 
-Genie Code can edit notebooks and reason about source. It cannot natively open classic cluster Spark UI (Jobs, Stages, SQL, Environment, task lists). The [Genie Code MCP catalog](https://docs.databricks.com/aws/en/genie-code/mcp) has no Spark UI server.
+Genie Code can read a notebook. It cannot open classic Spark UI: Jobs, Stages, SQL, Environment, tasks.
 
-I needed that for a slow Spark job and did not want to click through the UI by hand. Portable “read the Spark UI” skills alone do nothing: the agent still has no tool.
+The [Genie Code MCP catalog](https://docs.databricks.com/aws/en/genie-code/mcp) has no Spark UI server. A skill that says "read Stages" does nothing if there is no tool. A tool that dumps JSON does not tell the agent which tab owns wall time.
 
-## What this is
+This repo is the pair: an App that reads the live classic driver, and two skills that say how to read it.
 
-A small **Databricks App** (`apps/mcp-spark-ui`) that serves MCP at `/mcp` with `stateless_http=True` ([custom MCP](https://docs.databricks.com/aws/en/agents/mcp-tools/custom-mcp)).
+## Repo
 
-It calls Spark UI REST on the cluster **driver** through Databricks **driver-proxy** (`/driver-proxy-api/.../40001/api/v1/...`). You pass `cluster_id` from the Compute page, not the browser `spark_context_id`.
+| Path | Role |
+| --- | --- |
+| [`apps/mcp-spark-ui`](apps/mcp-spark-ui) | Databricks App. MCP at `/mcp`. Reads Spark UI through driver-proxy. |
+| [`skills/spark-performance-tuning`](skills/spark-performance-tuning/SKILL.md) | Slow or expensive job: wall stage, files, joins, shuffle, Environment. |
+| [`skills/spark-debugging`](skills/spark-debugging/SKILL.md) | Failed or pathological job: first error, OOM vs spill, driver vs executor. |
+| [`notebooks/`](notebooks) | Optional planted KPI. Not part of install. |
 
-Tools: `health`, `spark_ui_applications`, `spark_ui_sql`, `spark_ui_environment`, `spark_ui_executors`, `spark_ui_job`, `spark_ui_stage`, `spark_ui_task_list`.
+Works on a **Running classic** cluster. Not serverless, not SQL warehouse query profile, not History Server. After a cluster restart the old Spark app is gone.
 
-On a spoiled eval job in this repo, Genie Code + the skills below + this App got the write from **~312s to ~92s**, notebook-only. That is why I am sharing the App. You do not need the eval to use it on your own jobs.
+## Install
 
-Limits: live classic driver only. Not serverless, not SQL warehouse query profile, not Spark History Server.
+Need permission to create Databricks Apps.
 
-## Deploy the App on your workspace
+### 1. App
 
-1. Copy `apps/mcp-spark-ui` into your workspace (Repos / `databricks bundle` / import — whatever you already use).
-2. Create a **Databricks App** from that folder. The process command is in `app.yaml`: `uv run custom-mcp-server`.
-3. Apps inject `DATABRICKS_HOST`. Org id for driver-proxy is taken from that host (`adb-<org>.…`). Override with `SPARK_UI_ORG_ID` only if you must. CORS defaults to `DATABRICKS_HOST`; override with `SPARK_UI_CORS_ORIGINS` (comma-separated) if the workspace URL and App origin differ.
-4. Give the **app service principal** permission on the classic cluster you will debug (`CAN_ATTACH_TO` is the usual minimum so driver-proxy works). User OBO often cannot call clusters; the App falls back to this SP.
-5. App URL is `https://<app-name>-<org>.<cloud>.databricksapps.com`. MCP endpoint: `https://<app-url>/mcp`.
-6. In **Genie Code → Settings → MCP servers**, add this App as a custom MCP server. Enable the `spark_ui_*` tools (not only `health`).
-7. Optional: attach `skills/spark-performance-tuning` and `skills/spark-debugging` as Genie Code skills. They stay generic; they do not describe your job.
+1. Put `apps/mcp-spark-ui` in the workspace you will debug.
+2. Create a Databricks App from that folder. Start command is in `app.yaml`: `uv run custom-mcp-server`.
+3. On the App page, copy the **app service principal**. Grant it `CAN_ATTACH_TO` on each classic cluster you will inspect. The App talks to the driver as that principal.
+4. Grant teammates `CAN_USE` on the App.
+5. Apps inject `DATABRICKS_HOST`. Azure `adb-<org>.…` hosts already carry the org id. On AWS or GCP set `SPARK_UI_ORG_ID` (the `o=` value in the workspace URL). If the workspace URL and the App origin differ, set `SPARK_UI_CORS_ORIGINS` (comma-separated).
+6. MCP URL: `https://<app-url>/mcp`.
+7. Genie Code → Settings → MCP servers → add this App. Turn on every `spark_ui_*` tool, not only `health`. Use **Agent** mode. A workspace admin can disable custom MCP.
+
+Pass `cluster_id` from **Compute**. Do not pass `spark_context_id` from the Spark UI URL.
+
+Tools: `health`, `spark_ui_applications`, `spark_ui_sql`, `spark_ui_environment`, `spark_ui_executors`, `spark_ui_job`, `spark_ui_stage`, `spark_ui_task_list`. See [custom MCP](https://docs.databricks.com/aws/en/agents/mcp-tools/custom-mcp).
+
+### 2. Skills
+
+Same install. Copy the folders, do not "attach later".
+
+Just you:
+
+```
+/Workspace/Users/<you>/.assistant/skills/spark-performance-tuning/SKILL.md
+/Workspace/Users/<you>/.assistant/skills/spark-debugging/SKILL.md
+```
+
+Whole workspace (admin):
+
+```
+/Workspace/.assistant/skills/spark-performance-tuning/SKILL.md
+/Workspace/.assistant/skills/spark-debugging/SKILL.md
+```
+
+Or Genie Code → Settings → Open skills folder, then put both folders there. [Docs](https://docs.databricks.com/aws/en/genie-code/skills).
+
+Open a **new** Agent chat. If a skill does not load, `@` it.
 
 ## Use it on your job
 
-Classic cluster must be **Running** (driver up). In Genie Code (Agent mode), point at that cluster id and the job/run you care about. Typical order:
+Cluster **Running**. In Agent mode give the Compute `cluster_id` and the run.
 
-1. `spark_ui_applications` — live `application_id`
-2. `spark_ui_sql` — pick the SQL that owns wall time
-3. `spark_ui_environment` — effective conf (`maxPartitionBytes`, broadcast threshold, AQE, `shuffle.partitions`)
-4. `spark_ui_job` / `spark_ui_stage` / `spark_ui_task_list` — files, rows, join type, skew
+1. `spark_ui_applications` for the live `application_id`
+2. `spark_ui_sql` for the SQL that owns wall time
+3. `spark_ui_environment` for effective conf (cluster defaults count)
+4. `spark_ui_job` / `spark_ui_stage` / `spark_ui_task_list` for files, rows, join type, skew
 
-Do not expect History Server. After a cluster restart the old Spark app is gone.
+## Check the install
 
-## Check that the App works
+On your job. You do not need the notebooks below.
 
 - Browser: `GET https://<app-url>/health` → `{"status":"healthy"}`
-- MCP: `tools/list` on `/mcp` should return the `spark_ui_*` tools
-- `spark_ui_applications` with your `cluster_id` should return the current Spark app while the cluster is running
+- `/mcp` `tools/list` lists `spark_ui_*`
+- `spark_ui_applications` with a Compute `cluster_id` returns the current app
 
-If tools/list works but applications/SQL return 403, the app SP cannot reach driver-proxy on that cluster.
+`tools/list` works but applications or SQL return 403: the app service principal cannot reach that cluster.
 
 ---
 
-## Optional: eval in this repo
+## Optional: planted KPI
 
-Only if you want to reproduce the number above. Skip this on a real project.
+Only if you want a slow job in this repo. Skip on a real project.
 
-1. `notebooks/prepare_data.py` — clean work tables.
-2. `notebooks/spoil_data.py` — tiny files, store-key skew, 6-vendor FX.
-3. Set this **on the classic cluster** (not in `eval.py`):
+1. `notebooks/prepare_data.py` builds clean work tables.
+2. `notebooks/spoil_data.py` plants tiny files, store-key skew, and multi-vendor FX.
+3. Set on the **cluster**, not in `eval.py`:
 
 ```
 spark.sql.adaptive.enabled false
@@ -66,8 +97,7 @@ spark.sql.shuffle.partitions 2000
 spark.sql.files.maxPartitionBytes 32768
 ```
 
-4. `notebooks/eval.py` — unpatched KPI (joins, then USA filter). Measured SQL write **~312s**.
-5. Let Genie Code use this App + the skills, then run again. Measured **~92s**.
-6. Ceiling, same spoiled tables, session-only, does not rewrite sources: `notebooks/kpi_run_ideal.py` (**~60s** job / **~50s** SQL). It sets AQE, broadcast, `maxPartitionBytes=128m`, `openCostInBytes=0`, `shuffle.partitions=8`, USA filter first, `broadcast` dims, FX `dropDuplicates` on `(currency, rate_date)`.
+4. `notebooks/eval.py` is the unpatched pipeline.
+5. `notebooks/kpi_run_ideal.py` is a session-only ceiling on the same spoiled tables. It does not rewrite sources.
 
-Widgets default to `hive_metastore.spark_tuning_test.transactions` and `hive_metastore.spark_tuning_work`.
+Widgets: `hive_metastore.spark_tuning_test.transactions`, `hive_metastore.spark_tuning_work`.
